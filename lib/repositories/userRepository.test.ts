@@ -8,7 +8,15 @@ import {
   markEmailVerified,
   updatePassword,
   incrementTokenVersion,
+  deleteUnverifiedUsersOlderThan,
 } from "@/lib/repositories/userRepository";
+
+function setCreatedAt(db: DatabaseSync, userId: number, sqliteModifier: string): void {
+  db.prepare(`UPDATE users SET created_at = datetime('now', ?) WHERE id = ?`).run(
+    sqliteModifier,
+    userId,
+  );
+}
 
 describe("userRepository", () => {
   let db: DatabaseSync;
@@ -82,5 +90,49 @@ describe("userRepository", () => {
     expect(() =>
       createUser(db, { email: "dup@example.com", passwordHash: "h2", passwordSalt: "s2" }),
     ).toThrow();
+  });
+
+  describe("deleteUnverifiedUsersOlderThan", () => {
+    it("deletes an unverified account created more than the cutoff ago", () => {
+      const user = createUser(db, { email: "stale@example.com", passwordHash: "h", passwordSalt: "s" });
+      setCreatedAt(db, user.id, "-25 hours");
+
+      const deletedCount = deleteUnverifiedUsersOlderThan(db, 24);
+
+      expect(deletedCount).toBe(1);
+      expect(findUserById(db, user.id)).toBeUndefined();
+    });
+
+    it("keeps an unverified account created less than the cutoff ago", () => {
+      const user = createUser(db, { email: "fresh@example.com", passwordHash: "h", passwordSalt: "s" });
+      setCreatedAt(db, user.id, "-1 hours");
+
+      const deletedCount = deleteUnverifiedUsersOlderThan(db, 24);
+
+      expect(deletedCount).toBe(0);
+      expect(findUserById(db, user.id)).toBeDefined();
+    });
+
+    it("keeps a verified account even if created long ago", () => {
+      const user = createUser(db, { email: "old-verified@example.com", passwordHash: "h", passwordSalt: "s" });
+      setCreatedAt(db, user.id, "-25 hours");
+      markEmailVerified(db, user.id);
+
+      const deletedCount = deleteUnverifiedUsersOlderThan(db, 24);
+
+      expect(deletedCount).toBe(0);
+      expect(findUserById(db, user.id)).toBeDefined();
+    });
+
+    it("cascades: deleting a stale unverified user also deletes their todos", () => {
+      const user = createUser(db, { email: "cascade@example.com", passwordHash: "h", passwordSalt: "s" });
+      setCreatedAt(db, user.id, "-25 hours");
+      db.prepare(`INSERT INTO todos (user_id, title) VALUES (?, ?)`).run(user.id, "orphan todo");
+
+      deleteUnverifiedUsersOlderThan(db, 24);
+
+      const remainingTodos = db.prepare(`SELECT * FROM todos WHERE user_id = ?`).all(user.id);
+      expect(remainingTodos).toHaveLength(0);
+    });
   });
 });

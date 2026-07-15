@@ -76,3 +76,23 @@ export function updatePassword(
 export function incrementTokenVersion(db: DatabaseSync, userId: number): void {
   db.prepare(`UPDATE users SET token_version = token_version + 1 WHERE id = ?`).run(userId);
 }
+
+/**
+ * Deletes unverified accounts created more than `hoursAgo` hours ago.
+ * ON DELETE CASCADE (see lib/db.ts schema) removes their todos and auth
+ * tokens along with them. The cutoff is computed by SQLite's own
+ * `datetime('now', ...)`, not in JS — `created_at` is written by SQLite's
+ * `datetime('now')` default, which uses a different string format
+ * ("YYYY-MM-DD HH:MM:SS") than `Date.prototype.toISOString()`
+ * ("YYYY-MM-DDTHH:MM:SS.sssZ"). Comparing those two formats as strings in a
+ * SQL WHERE clause would silently misorder every row (the space in the
+ * stored format sorts below the 'T' in the ISO format, for every date).
+ */
+export function deleteUnverifiedUsersOlderThan(db: DatabaseSync, hoursAgo: number): number {
+  const result = db
+    .prepare(
+      `DELETE FROM users WHERE email_verified_at IS NULL AND created_at < datetime('now', ?)`,
+    )
+    .run(`-${hoursAgo} hours`);
+  return Number(result.changes);
+}

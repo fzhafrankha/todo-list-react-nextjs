@@ -23,15 +23,17 @@ import {
   resendVerificationSchema,
 } from "@/lib/schemas/auth";
 
-const EMAIL_VERIFICATION_TTL_MS = 30 * 60 * 1000;
+const EMAIL_VERIFICATION_TTL_MS = 15 * 60 * 1000;
 const PASSWORD_RESET_TTL_MS = 30 * 60 * 1000;
 
 const GENERIC_INVALID_CREDENTIALS = "Invalid email or password.";
 const GENERIC_RESET_SENT = "If that email exists, a password reset link has been sent.";
 const GENERIC_VERIFICATION_SENT =
   "If that account exists and isn't verified yet, a new link has been sent.";
-const GENERIC_REGISTER_SENT =
-  "If that email isn't already registered, check your inbox to verify your address.";
+
+function verifyPendingUrl(email: string): string {
+  return `/verify-pending?email=${encodeURIComponent(email)}`;
+}
 
 // Precomputed once so loginAction always pays the same scrypt cost whether or
 // not the account exists — otherwise an attacker can distinguish "no such
@@ -92,7 +94,10 @@ export async function registerAction(
     await attemptSend(() => sendVerificationEmail(email, token));
   }
 
-  return { success: GENERIC_REGISTER_SENT };
+  // Redirects unconditionally, whether or not the account already existed —
+  // a conditional redirect (or conditional message) here would reopen the
+  // exact enumeration channel closed by the identical DB/email handling above.
+  redirect(verifyPendingUrl(email));
 }
 
 export async function loginAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
@@ -118,9 +123,10 @@ export async function loginAction(_prev: ActionState, formData: FormData): Promi
     return { error: GENERIC_INVALID_CREDENTIALS };
   }
   if (!user.emailVerifiedAt) {
-    return {
-      error: "Please verify your email before logging in. Check your inbox, or request a new link below.",
-    };
+    // Reached only with a correct password for an existing account, so this
+    // doesn't open a new enumeration channel — an attacker already had to
+    // know the real password to land here.
+    redirect(verifyPendingUrl(email));
   }
 
   const token = createSessionToken(user.id, user.tokenVersion);

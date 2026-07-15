@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 interface SentMail {
+  from: string;
   to: string;
   subject: string;
   text: string;
@@ -63,6 +64,65 @@ describe("sendVerificationEmail / sendPasswordResetEmail", () => {
     delete process.env.APP_URL;
 
     await expect(sendVerificationEmail("user@example.com", "tok")).rejects.toThrow(/APP_URL/);
+  });
+});
+
+describe("MAIL_PROVIDER=mailpit", () => {
+  it("sends mail without requiring Gmail credentials, using a default from-address", async () => {
+    vi.resetModules();
+    process.env.MAIL_PROVIDER = "mailpit";
+    delete process.env.GMAIL_USER;
+    delete process.env.GMAIL_APP_PASSWORD;
+    delete process.env.MAIL_FROM;
+    sendMailMock.mockClear();
+
+    const { sendVerificationEmail: freshSend } = await import("@/lib/email/mailer");
+    await freshSend("user@example.com", "tok-mailpit");
+
+    expect(sendMailMock).toHaveBeenCalledTimes(1);
+    const call = sendMailMock.mock.calls[0][0];
+    expect(call.from).toBe("Todo List <dev@localhost>");
+    expect(call.to).toBe("user@example.com");
+  });
+
+  it("connects to SMTP_HOST/SMTP_PORT when set, defaulting to localhost:1025", async () => {
+    vi.resetModules();
+    process.env.MAIL_PROVIDER = "mailpit";
+    process.env.SMTP_HOST = "mailpit.local";
+    process.env.SMTP_PORT = "2525";
+
+    const nodemailerModule = await import("nodemailer");
+    const createTransportMock = nodemailerModule.default.createTransport as unknown as {
+      mock: { calls: unknown[][] };
+    };
+    const callsBefore = createTransportMock.mock.calls.length;
+
+    const { sendVerificationEmail: freshSend } = await import("@/lib/email/mailer");
+    await freshSend("user@example.com", "tok-smtp-override");
+
+    const newCalls = createTransportMock.mock.calls.slice(callsBefore);
+    expect(newCalls).toContainEqual([{ host: "mailpit.local", port: 2525, secure: false }]);
+  });
+
+  it("respects an explicit MAIL_FROM even in mailpit mode", async () => {
+    vi.resetModules();
+    process.env.MAIL_PROVIDER = "mailpit";
+    process.env.MAIL_FROM = "Custom Sender <custom@example.com>";
+    sendMailMock.mockClear();
+
+    const { sendVerificationEmail: freshSend } = await import("@/lib/email/mailer");
+    await freshSend("user@example.com", "tok-custom-from");
+
+    expect(sendMailMock.mock.calls[0][0].from).toBe("Custom Sender <custom@example.com>");
+  });
+
+  it("rejects an unknown MAIL_PROVIDER value", async () => {
+    vi.resetModules();
+    process.env.MAIL_PROVIDER = "not-a-real-provider";
+
+    const { sendVerificationEmail: freshSend } = await import("@/lib/email/mailer");
+
+    await expect(freshSend("user@example.com", "tok")).rejects.toThrow(/Unknown MAIL_PROVIDER/);
   });
 });
 

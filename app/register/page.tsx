@@ -29,7 +29,6 @@ export default function RegisterPage() {
           className="rounded border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-900"
         />
         {state.error && <p className="text-sm text-red-600">{state.error}</p>}
-        {state.success && <p className="text-sm text-green-600">{state.success}</p>}
         <button
           type="submit"
           disabled={pending}

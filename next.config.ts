@@ -37,6 +37,20 @@ const SECURITY_HEADERS = [
 ];
 
 const nextConfig: NextConfig = {
+  // Dev-only: Next.js blocks cross-origin requests to dev-mode internals
+  // (HMR, /_next/*) from hosts it doesn't recognize, to stop a malicious
+  // site from embedding/probing your local dev server. A tunnel (Cloudflare,
+  // ngrok, etc.) presents your own domain as a "foreign" origin from the
+  // dev server's point of view, so it needs to be listed explicitly here.
+  //
+  // "0.0.0.0" is included below as requested, but note it will only ever
+  // match a request whose Origin is literally "0.0.0.0" — Next.js's origin
+  // matcher (node_modules/next/dist/server/lib/router-utils/csrf-protection.js)
+  // explicitly rejects a bare "*"/"**" wildcard on purpose, specifically so
+  // this can't be opened to "any origin". There is no config that does that.
+  // To actually let a tunnel through, add its real hostname here, e.g.
+  // "todo.yourdomain.com", or a subdomain wildcard like "*.yourdomain.com".
+  allowedDevOrigins: ["0.0.0.0"],
   async headers() {
     return [
       {

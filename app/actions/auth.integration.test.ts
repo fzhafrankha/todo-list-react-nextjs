@@ -66,14 +66,29 @@ function formData(fields: Record<string, string>): FormData {
   return fd;
 }
 
+function verifyPendingUrl(email: string): string {
+  return `/verify-pending?email=${encodeURIComponent(email)}`;
+}
+
+async function expectRedirectTo(promise: Promise<unknown>, url: string): Promise<void> {
+  await expect(promise).rejects.toThrow(`REDIRECT:${url}`);
+}
+
+async function register(email: string, password: string): Promise<void> {
+  await expectRedirectTo(
+    registerAction({}, formData({ email, password })),
+    verifyPendingUrl(email),
+  );
+}
+
 async function registerAndVerify(email: string, password: string): Promise<void> {
-  await registerAction({}, formData({ email, password }));
+  await register(email, password);
   const token = state.sentEmails.filter((e) => e.kind === "verify").at(-1)!.token;
   await verifyEmailAction({}, formData({ token }));
 }
 
 async function login(email: string, password: string): Promise<void> {
-  await expect(loginAction({}, formData({ email, password }))).rejects.toThrow(/^REDIRECT:\/$/);
+  await expectRedirectTo(loginAction({}, formData({ email, password })), "/");
 }
 
 beforeEach(() => {
@@ -84,18 +99,13 @@ beforeEach(() => {
 });
 
 describe("registration and login flow", () => {
-  it("blocks login until the email is verified, then allows it after verification", async () => {
-    const registerResult = await registerAction(
-      {},
-      formData({ email: "alice@example.com", password: "password123" }),
-    );
-    expect(registerResult.success).toMatch(/verify your address/i);
+  it("redirects to verify-pending on registration, blocks login until verified, then allows it after verification", async () => {
+    await register("alice@example.com", "password123");
 
-    const blocked = await loginAction(
-      {},
-      formData({ email: "alice@example.com", password: "password123" }),
+    await expectRedirectTo(
+      loginAction({}, formData({ email: "alice@example.com", password: "password123" })),
+      verifyPendingUrl("alice@example.com"),
     );
-    expect(blocked.error).toMatch(/verify your email/i);
 
     const verifyToken = state.sentEmails.find((e) => e.kind === "verify")!.token;
     const verifyResult = await verifyEmailAction({}, formData({ token: verifyToken }));
@@ -141,20 +151,16 @@ describe("registration and login flow", () => {
     expect(result.error).toMatch(/missing verification token/i);
   });
 
-  it("gives the same generic response whether or not the email is already registered (no enumeration via register)", async () => {
-    const firstAttempt = await registerAction(
-      {},
-      formData({ email: "jack@example.com", password: "password123" }),
-    );
+  it("redirects to the same verify-pending URL whether or not the email is already registered (no enumeration via register)", async () => {
+    await register("jack@example.com", "password123");
     const emailsAfterFirst = state.sentEmails.length;
 
-    const secondAttempt = await registerAction(
-      {},
-      formData({ email: "jack@example.com", password: "a-different-password1" }),
-    );
+    // Second registration attempt for the same email must behave identically
+    // (same redirect target, asserted inside register()) — otherwise this
+    // would leak whether the email was already taken.
+    await register("jack@example.com", "a-different-password1");
 
-    expect(firstAttempt.success).toBe(secondAttempt.success);
-    // No second verification email for an email that's already registered.
+    // No second account-creation email for an email that's already registered.
     expect(state.sentEmails.length).toBe(emailsAfterFirst);
   });
 });
@@ -219,7 +225,7 @@ describe("password reset flow", () => {
 
 describe("resend verification", () => {
   it("sends a new verification email for an existing, unverified account", async () => {
-    await registerAction({}, formData({ email: "erin@example.com", password: "password123" }));
+    await register("erin@example.com", "password123");
     state.sentEmails.length = 0;
 
     const result = await resendVerificationAction({}, formData({ email: "erin@example.com" }));
@@ -246,7 +252,7 @@ describe("logout", () => {
     await login("grace@example.com", "password123");
     expect(state.cookies.get("session")).toBeTruthy();
 
-    await expect(logoutAction()).rejects.toThrow(/^REDIRECT:\/login$/);
+    await expectRedirectTo(logoutAction(), "/login");
 
     expect(state.cookies.has("session")).toBe(false);
   });

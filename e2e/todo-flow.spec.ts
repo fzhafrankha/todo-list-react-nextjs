@@ -33,7 +33,8 @@ test("register, verify email, log in, manage todos, and log out", async ({ page 
   await page.getByPlaceholder("Email").fill(email);
   await page.getByPlaceholder(/Password/).fill(password);
   await page.getByRole("button", { name: /create account/i }).click();
-  await expect(page.getByText(/verify your address/i)).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`/verify-pending\\?email=${encodeURIComponent(email)}`));
+  await expect(page.getByRole("heading", { name: /verify your email/i })).toBeVisible();
 
   const verifyLink = new URL(getLatestLinkForEmail(email));
   await page.goto(verifyLink.pathname + verifyLink.search);
@@ -65,4 +66,25 @@ test("register, verify email, log in, manage todos, and log out", async ({ page 
 test("a logged-out visitor is redirected away from the todo list", async ({ page }) => {
   await page.goto("/");
   await expect(page).toHaveURL(/\/login/);
+});
+
+test("logging in with an unverified account redirects to the verify-your-email page", async ({
+  page,
+}) => {
+  const email = `e2e-unverified-${Date.now()}@example.com`;
+  const password = "password123";
+
+  await page.goto("/register");
+  await page.getByPlaceholder("Email").fill(email);
+  await page.getByPlaceholder(/Password/).fill(password);
+  await page.getByRole("button", { name: /create account/i }).click();
+  await expect(page).toHaveURL(new RegExp(`/verify-pending\\?email=${encodeURIComponent(email)}`));
+
+  await page.goto("/login");
+  await page.getByPlaceholder("Email").fill(email);
+  await page.getByPlaceholder("Password").fill(password);
+  await page.getByRole("button", { name: /log in/i }).click();
+
+  await expect(page).toHaveURL(new RegExp(`/verify-pending\\?email=${encodeURIComponent(email)}`));
+  await expect(page.getByRole("button", { name: /resend verification link/i })).toBeVisible();
 });
